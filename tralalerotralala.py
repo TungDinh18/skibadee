@@ -1,13 +1,19 @@
 import cv2
-from fer import FER  # Install first: pip install fer
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import load_model
 
-# Load the pre-trained Haar Cascade Classifier for face detection
+# Load Haar Cascade for face detection
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-# Load the FER emotion detector
-emotion_detector = FER(mtcnn=True)
+# Load pre-trained emotion model (downloaded model.h5 must be in same folder)
+# You can get a pretrained FER2013 model from:
+# https://github.com/oarriaga/face_classification or https://github.com/justinshenk/fer
+model = load_model("emotion_model.h5")
 
-# Start video capture from the default webcam (0)
+# Class labels (adjust based on model you download)
+emotion_labels = ['Angry','Disgust','Fear','Happy','Sad','Surprise','Neutral']
+
 cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
@@ -15,45 +21,37 @@ if not cap.isOpened():
     exit()
 
 while True:
-    # Capture frame-by-frame
     ret, frame = cap.read()
-
-    # If frame is read correctly, ret will be True
     if not ret:
         print("Error: Failed to capture image")
         break
 
-    # Convert frame to grayscale (Face detection works better on grayscale)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Detect faces in the grayscale image
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
 
-    # Draw rectangles and detect emotions
     for (x, y, w, h) in faces:
-        # Draw face rectangle
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
+        # Preprocess face ROI for model
+        face_roi = gray[y:y+h, x:x+w]
+        face_resized = cv2.resize(face_roi, (48, 48))
+        face_normalized = face_resized.astype("float32") / 255.0
+        face_input = np.expand_dims(face_normalized, axis=0)
+        face_input = np.expand_dims(face_input, axis=-1)  # (1, 48, 48, 1)
 
-        # Detect emotions
-        result = emotion_detector.detect_emotions(face_roi)
-        if result:
-            # Get the emotion with highest score
-            emotions = result[0]["emotions"]
-            top_emotion = max(emotions, key=emotions.get)
-            text = f"{top_emotion} ({emotions[top_emotion]*100:.1f}%)"
+        # Predict emotion
+        predictions = model.predict(face_input)
+        emotion_index = np.argmax(predictions)
+        emotion = emotion_labels[emotion_index]
+        confidence = predictions[0][emotion_index]
 
-            # Put text above face rectangle
-            cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"{emotion} ({confidence*100:.1f}%)", (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    # Display the resulting frame
-    cv2.imshow('Face + Emotion Detection - Press q to Quit', frame)
+    cv2.imshow("Face + Emotion Detection (TF) - Press q to Quit", frame)
 
-    # Break the loop when the 'q' key is pressed
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Release the capture and close any open windows
 cap.release()
 cv2.destroyAllWindows()
